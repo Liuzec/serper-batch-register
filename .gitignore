@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+api_keys.json
+debug_*.png
+register_log.txt
+*.log
