@@ -6,12 +6,12 @@
 
 ```
 serper注册机/
-├── config.py           # 配置文件（URL、sitekey、并发数等）
-├── .env                # 敏感配置（Capsolver API Key，不入库）
+├── config.py           # 配置文件（URL、sitekey、并发数、代理等）
+├── .env                # 敏感配置（Capsolver API Key、代理，不入库）
 ├── .env.example        # .env 模板
 ├── email_module.py     # 模块1：临时邮箱（Mail.tm）
 ├── captcha_module.py   # 模块2：验证码解决（Capsolver: reCAPTCHA v2 + Turnstile）
-├── register.py         # 模块3：单次注册流程（串联所有模块）
+├── register.py         # 模块3：单次注册流程（纯 httpx，无浏览器）
 ├── batch_register.py   # 模块4：并发批量注册
 ├── requirements.txt    # Python 依赖
 └── api_keys.json       # 输出：注册成功的 API Key（自动生成）
@@ -19,13 +19,16 @@ serper注册机/
 
 ## 技术架构
 
+### 纯 HTTP 方案（无浏览器依赖）
+
+所有 API 调用通过 httpx 直接发送，无需 Playwright/Selenium，启动快、资源消耗低。
+
 ### API 端点 (baseURL: `https://api.serper.dev`)
 
 | 端点 | 方法 | 用途 | 验证码 |
 |------|------|------|--------|
 | `/auth/register` | POST | 注册账号 | reCAPTCHA v2 invisible + Turnstile |
 | `/auth/login` | POST | 登录 | Turnstile |
-| `/auth/me` | GET | 获取用户信息 | Session Cookie |
 | `/users/api-keys` | GET | 获取 API Key 列表 | Session Cookie |
 
 ### 验证码
@@ -34,16 +37,16 @@ serper注册机/
 - **Cloudflare Turnstile**: sitekey `0x4AAAAAAA_8HniKZ_83GBYh`
 - 通过 Capsolver API 解决，无需浏览器内交互
 
-### 注册流程 (8 步)
+### 注册流程 (6 步)
 
-1. Mail.tm 创建临时邮箱
-2. Playwright 打开注册页面（获取 Cloudflare cookies）
-3. 并发解 reCAPTCHA v2 invisible + Turnstile（Capsolver）
-4. `fetch POST /auth/register`（带验证码 token）
-5. 解新的 Turnstile → `fetch POST /auth/login`
-6. 轮询 Mail.tm 等待验证邮件
-7. 访问验证链接激活账号
-8. 重新登录 → `GET /users/api-keys` 获取 API Key
+1. **并发启动**: 创建临时邮箱 + 解 reCAPTCHA v2 + 解 Turnstile（同时进行）
+2. `POST /auth/register`（带验证码 token）
+3. 解新的 Turnstile → `POST /auth/login`
+4. 轮询 Mail.tm 等待验证邮件
+5. GET 验证链接激活账号
+6. 重新登录 → `GET /users/api-keys` 获取 API Key
+
+> 相比旧版 8 步流程（含浏览器启动），新版并发第1步 + 减少 Turnstile 次数，单次注册约 15-20 秒。
 
 ## 快速开始
 
@@ -51,7 +54,6 @@ serper注册机/
 
 ```bash
 pip install -r requirements.txt
-playwright install chromium
 ```
 
 ### 2. 配置
@@ -66,9 +68,10 @@ cp .env.example .env
 
 ```
 CAPSOLVER_API_KEY=你的key
+PROXY_URL=http://127.0.0.1:7897  # 可选，本地代理
 ```
 
-其他配置（并发数、浏览器选项等）在 `config.py` 中修改。
+其他配置（并发数等）在 `config.py` 中修改。
 
 ### 3. 运行
 
@@ -92,20 +95,14 @@ python -X utf8 batch_register.py 5 3
 
 Serper.dev 有注册频率限制：
 - 每 IP 每小时约 5 次注册尝试
-- 超出后返回 400 "Registration failed" 或 429 "Too Many Requests"
+- 首次超限返回 400 "Registration failed"（伪装的频率限制）
+- 继续尝试返回 429 "Too Many Requests"
 - 建议每次注册间隔 15+ 分钟，或使用代理轮换 IP
 
 ### 其他
 
-- 先跑通单次注册 (`python register.py`) 再跑批量
+- 先跑通单次注册 (`python -X utf8 register.py`) 再跑批量
 - 并发数不要设太高，建议 1-3，配合代理使用
-- 如需代理，在 `config.py` 中配置 `PROXY_LIST`
+- 如需代理，在 `.env` 中配置 `PROXY_URL`
 - Windows 下运行建议加 `-X utf8` 避免 GBK 编码错误
 - **不要把 `.env` 提交到版本控制**（已在 `.gitignore` 中排除）
-
-## 调试
-
-注册失败时会在项目目录生成截图：
-- `debug_no_email.png` - 验证邮件超时
-- `debug_apikey.png` - 提取 API Key 时出错
-- `debug_error.png` - 其他错误

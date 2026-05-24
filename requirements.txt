@@ -1,4 +1,3 @@
-playwright
 httpx
 faker
 python-dotenv
